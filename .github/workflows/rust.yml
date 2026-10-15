@@ -24,3 +24,11 @@ jobs:
         run: cargo test --all-targets
       - name: Clippy
         run: cargo clippy --all-targets -- -D warnings
+      - name: Ensure the trigger never links GUI libraries
+        run: |
+          cargo build --release --bin seltrans-trigger
+          if ldd target/release/seltrans-trigger | grep -Ei 'gtk|adwaita|gdk'; then
+            echo "::error::seltrans-trigger must stay GUI-free by construction"
+            ldd target/release/seltrans-trigger
+            exit 1
+          fi

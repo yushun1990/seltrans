@@ -7,10 +7,9 @@ use std::io::{self, Read, Write};
 use std::os::unix::fs::{FileTypeExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::PathBuf;
-use std::sync::mpsc::SyncSender;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use fs2::FileExt;
+use fs4::fs_std::FileExt;
 
 pub const MAX_SELECTION_BYTES: usize = 64 * 1024;
 const SOCKET_FILE: &str = "trigger.sock";
@@ -40,11 +39,15 @@ impl Drop for ResidentSocket {
     }
 }
 
-fn socket_directory() -> io::Result<PathBuf> {
+fn runtime_directory() -> io::Result<PathBuf> {
     let runtime = std::env::var_os("XDG_RUNTIME_DIR")
         .filter(|value| !value.is_empty())
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is unset"))?;
-    let dir = PathBuf::from(runtime).join("seltrans");
+    Ok(PathBuf::from(runtime).join("seltrans"))
+}
+
+fn socket_directory() -> io::Result<PathBuf> {
+    let dir = runtime_directory()?;
     // XDG_RUNTIME_DIR must already be private to the current user.
     fs::create_dir_all(&dir)?;
     fs::set_permissions(&dir, fs::Permissions::from_mode(0o700))?;
@@ -59,12 +62,15 @@ pub fn bind_resident() -> io::Result<(UnixListener, ResidentSocket)> {
         .create(true)
         .truncate(false)
         .open(dir.join(LOCK_FILE))?;
-    lock.try_lock_exclusive().map_err(|error| {
-        io::Error::new(
+    let acquired = lock
+        .try_lock_exclusive()
+        .map_err(|error| io::Error::other(format!("cannot acquire the resident lock: {error}")))?;
+    if !acquired {
+        return Err(io::Error::new(
             io::ErrorKind::AlreadyExists,
-            format!("seltrans is already running (or the lock cannot be acquired): {error}"),
-        )
-    })?;
+            "seltrans is already running",
+        ));
+    }
 
     let path = dir.join(SOCKET_FILE);
     if let Ok(meta) = fs::symlink_metadata(&path) {
@@ -83,10 +89,7 @@ pub fn bind_resident() -> io::Result<(UnixListener, ResidentSocket)> {
 }
 
 fn socket_path() -> io::Result<PathBuf> {
-    let runtime = std::env::var_os("XDG_RUNTIME_DIR")
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "XDG_RUNTIME_DIR is unset"))?;
-    Ok(PathBuf::from(runtime).join("seltrans").join(SOCKET_FILE))
+    Ok(runtime_directory()?.join(SOCKET_FILE))
 }
 
 pub fn send_to_resident(text: &str) -> io::Result<()> {
@@ -156,22 +159,32 @@ fn read_invocation(reader: &mut impl Read, sequence: u64) -> io::Result<Invocati
     })
 }
 
-fn process_connection(mut stream: UnixStream, sequence: u64, sender: &SyncSender<Invocation>) {
+/// Delivery is decoupled from any specific queue: the GUI supplies an enqueue
+/// callback (a bounded channel send), and "OK" still means the invocation was
+/// accepted by that bounded queue, not merely that the socket accepted it.
+fn process_connection<E>(mut stream: UnixStream, sequence: u64, enqueue: &E)
+where
+    E: Fn(Invocation) -> Result<(), Invocation>,
+{
     let _ = stream.set_read_timeout(Some(SOCKET_TIMEOUT));
-    let result = read_invocation(&mut stream, sequence)
-        .and_then(|request| sender.try_send(request).map_err(io::Error::other));
+    let result = read_invocation(&mut stream, sequence).and_then(|request| {
+        enqueue(request).map_err(|_| io::Error::other("resident queue is full or has no receiver"))
+    });
     let _ = stream.write_all(if result.is_ok() { b"OK" } else { b"ER" });
 }
 
-/// This loop owns delivery sequence numbers. GTK consumes all pending updates
-/// on its main thread and displays only the latest arrival in each batch.
-pub fn serve(listener: UnixListener, sender: SyncSender<Invocation>) {
+/// This loop owns delivery sequence numbers. The GUI consumes arrivals as
+/// main-context events and presents only the newest invocation of a burst.
+pub fn serve<E>(listener: UnixListener, enqueue: E)
+where
+    E: Fn(Invocation) -> Result<(), Invocation> + Send + 'static,
+{
     let mut sequence = 0_u64;
     for connection in listener.incoming() {
         match connection {
             Ok(stream) => {
                 sequence = sequence.saturating_add(1);
-                process_connection(stream, sequence, &sender);
+                process_connection(stream, sequence, &enqueue);
             }
             Err(error) => eprintln!("seltrans: incoming trigger error: {error}"),
         }
@@ -216,10 +229,18 @@ mod tests {
     fn acknowledgement_means_the_request_was_queued() {
         let (sender, receiver) = sync_channel(1);
         let (mut client, server) = UnixStream::pair().unwrap();
-        let handler = std::thread::spawn(move || process_connection(server, 3, &sender));
+        let handler = std::thread::spawn(move || {
+            let enqueue = move |invocation: Invocation| {
+                sender.try_send(invocation).map_err(|error| match error {
+                    std::sync::mpsc::TrySendError::Full(invocation)
+                    | std::sync::mpsc::TrySendError::Disconnected(invocation) => invocation,
+                })
+            };
+            process_connection(server, 3, &enqueue);
+        });
         client.write_all(&frame(99, "text A")).unwrap();
         client.shutdown(std::net::Shutdown::Write).unwrap();
-        let mut acknowledgement = [0u8; 2];
+        let mut acknowledgement = [0; 2];
         client.read_exact(&mut acknowledgement).unwrap();
         handler.join().unwrap();
         assert_eq!(&acknowledgement, b"OK");

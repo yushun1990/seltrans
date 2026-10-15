@@ -1,17 +1,15 @@
 //! One reusable native GTK/libadwaita window, owned by the resident process.
 
 use std::rc::Rc;
-use std::sync::mpsc::Receiver;
-use std::time::Duration;
 
 use adw::prelude::*;
 use adw::{glib, gtk};
 
-use crate::classifier::classify_selection;
-use crate::domain::SelectionMode;
-use crate::ipc::Invocation;
+use seltrans_core::classifier::classify_selection;
+use seltrans_core::domain::SelectionMode;
+use seltrans_core::ipc::Invocation;
 
-pub fn run(receiver: Receiver<Invocation>) {
+pub fn run(receiver: async_channel::Receiver<Invocation>) {
     let app = adw::Application::builder()
         .application_id("io.github.yushun1990.seltrans")
         .build();
@@ -21,6 +19,7 @@ pub fn run(receiver: Receiver<Invocation>) {
         if !app.windows().is_empty() {
             return;
         }
+        let receiver = receiver.clone();
 
         let window = adw::ApplicationWindow::builder()
             .application(app)
@@ -97,30 +96,37 @@ pub fn run(receiver: Receiver<Invocation>) {
         // GTK normally exits when its last window closes. An owned application
         // hold keeps the manual-resident process alive even while hidden.
         let keep_alive = app.hold();
-        let receiver = receiver.clone();
-        let mut displayed_sequence = 0u64;
-        glib::timeout_add_local(Duration::from_millis(16), move || {
-            let _hold = &keep_alive;
-            let mut latest = None;
-            while let Ok(next) = receiver.try_recv() {
-                if next.sequence > displayed_sequence {
-                    latest = Some(next);
+
+        // Arrivals wake the main loop only when a trigger is actually
+        // delivered; there is no polling while idle. A burst of triggers is
+        // coalesced to its newest invocation, and `displayed_sequence` keeps
+        // stale deliveries inert — the same fencing that will order
+        // out-of-order async analysis results in M2.
+        glib::spawn_future_local(async move {
+            let _keep_alive = keep_alive;
+            let mut displayed_sequence = 0_u64;
+            while let Ok(arrival) = receiver.recv().await {
+                if arrival.sequence <= displayed_sequence {
+                    continue;
                 }
-            }
-            if let Some(next) = latest {
-                displayed_sequence = next.sequence;
-                let classification = classify_selection(&next.text);
+                let mut latest = arrival;
+                while let Ok(next) = receiver.try_recv() {
+                    if next.sequence > latest.sequence {
+                        latest = next;
+                    }
+                }
+                displayed_sequence = latest.sequence;
+                let classification = classify_selection(&latest.text);
                 let label = match classification {
                     Ok(SelectionMode::Word) => "Single word",
                     Ok(SelectionMode::Passage) => "Passage",
                     Err(_) => "Empty selection",
                 };
-                mode.set_text(&format!("{label} · request {}", next.sequence));
-                source.set_text(&next.text);
+                mode.set_text(&format!("{label} · request {}", latest.sequence));
+                source.set_text(&latest.text);
                 // This is the same window object constructed once at startup.
                 window.present();
             }
-            glib::ControlFlow::Continue
         });
         // Manual startup intentionally leaves the result window hidden until
         // the first explicit selection trigger.
