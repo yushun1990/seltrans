@@ -1,7 +1,8 @@
-//! Core library for seltrans.
-//!
-//! The crate is intentionally minimal during repository bootstrap.
-//! Product and architecture contracts live in `docs/` and should guide
-//! implementation before provider or UI details are introduced.
+//! Core library and M1 resident runtime for seltrans.
+//! Product and architecture contracts live in docs/.
 
+pub mod classifier;
 pub mod domain;
+pub mod ipc;
+pub mod selection;
+pub mod ui;

@@ -96,11 +96,12 @@ The global shortcut is intentionally configured by the desktop environment rathe
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
 - [UI wireframe reference](docs/UI_REFERENCES.md)
+- [M1 Fedora setup and acceptance](docs/M1.md)
 - [ADR 0001: resident shortcut model](docs/adr/0001-resident-shortcut-model.md)
 
 ## Status
 
-Early design / bootstrap stage. The first milestone is a thin vertical slice:
+M1 resident/selection UI implementation is proposed for review; the Fedora manual acceptance tests are not yet complete. The first milestone is a thin vertical slice:
 
 ```text
 Start `seltrans` once (manually for the initial version)
