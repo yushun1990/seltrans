@@ -90,10 +90,16 @@ fn socket_path() -> io::Result<PathBuf> {
 
 pub fn send_to_resident(text: &str) -> io::Result<()> {
     if text.trim().is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty selection"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "empty selection",
+        ));
     }
     if text.len() > MAX_SELECTION_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "selection exceeds 64 KiB"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "selection exceeds 64 KiB",
+        ));
     }
     let path = socket_path()?;
     let mut stream = UnixStream::connect(&path).map_err(|error| {
@@ -127,14 +133,20 @@ fn read_invocation(reader: &mut impl Read, sequence: u64) -> io::Result<Invocati
     reader.read_exact(&mut length_bytes)?;
     let length = u32::from_be_bytes(length_bytes) as usize;
     if length == 0 || length > MAX_SELECTION_BYTES {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid selection length"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "invalid selection length",
+        ));
     }
     let mut payload = vec![0u8; length];
     reader.read_exact(&mut payload)?;
     let text = String::from_utf8(payload)
         .map_err(|_| io::Error::new(io::ErrorKind::InvalidData, "non-UTF-8 selection"))?;
     if text.trim().is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "empty selection"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "empty selection",
+        ));
     }
     Ok(Invocation {
         invocation_id: u128::from_be_bytes(invocation_bytes),
