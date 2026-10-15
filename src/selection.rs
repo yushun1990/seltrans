@@ -21,11 +21,16 @@ pub enum SelectionError {
 impl std::fmt::Display for SelectionError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::Unavailable(error) => write!(f, "cannot start wl-paste: {error} (install wl-clipboard)"),
+            Self::Unavailable(error) => {
+                write!(f, "cannot start wl-paste: {error} (install wl-clipboard)")
+            }
             Self::Failed(reason) => write!(f, "cannot read Wayland primary selection: {reason}"),
             Self::TooLarge => write!(f, "selection exceeds the 64 KiB limit"),
             Self::InvalidUtf8 => write!(f, "selected text is not valid UTF-8"),
-            Self::Empty => write!(f, "nothing is selected; select some text and press Alt+Q again"),
+            Self::Empty => write!(
+                f,
+                "nothing is selected; select some text and press Alt+Q again"
+            ),
         }
     }
 }
@@ -67,7 +72,9 @@ impl SelectionProvider for WlPasteSelection {
             .wait()
             .map_err(|error| SelectionError::Failed(error.to_string()))?;
         if !status.success() {
-            return Err(SelectionError::Failed(format!("wl-paste exited with {status}")));
+            return Err(SelectionError::Failed(format!(
+                "wl-paste exited with {status}"
+            )));
         }
         let text = String::from_utf8(bytes).map_err(|_| SelectionError::InvalidUtf8)?;
         if text.trim().is_empty() {
