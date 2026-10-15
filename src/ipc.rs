@@ -57,6 +57,7 @@ pub fn bind_resident() -> io::Result<(UnixListener, ResidentSocket)> {
         .read(true)
         .write(true)
         .create(true)
+        .truncate(false)
         .open(dir.join(LOCK_FILE))?;
     lock.try_lock_exclusive().map_err(|error| {
         io::Error::new(
