@@ -1,0 +1,10 @@
+[package]
+name = "seltrans-core"
+version = "0.1.0"
+edition = "2024"
+description = "Selection capture, classification and resident IPC for seltrans."
+repository = "https://github.com/yushun1990/seltrans"
+publish = false
+
+[dependencies]
+fs4 = "0.13"

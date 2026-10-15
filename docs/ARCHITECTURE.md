@@ -19,7 +19,7 @@ desktop shortcut
 
 **Accepted ADR:** [0001 — Resident shortcut model](adr/0001-resident-shortcut-model.md).
 
-The user launches `seltrans` once. The running application owns GTK, its one reusable result window, current request state, configuration, provider clients, and learning storage. A lightweight per-invocation trigger (possibly a short-lived CLI mode of the same executable) reads the active selection **before any focus change** and sends that exact text to the resident instance over local IPC.
+The user launches `seltrans` once. The running application owns GTK, its one reusable result window, current request state, configuration, provider clients, and learning storage. A lightweight per-invocation trigger — the separate `seltrans-trigger` executable — reads the active selection **before any focus change** and sends that exact text to the resident instance over local IPC.
 
 ```text
 GNOME Alt+Q
@@ -41,7 +41,7 @@ lightweight trigger -- read current selection BEFORE changing focus
               +--> LearningRepository (SQLite)
 ```
 
-The trigger may be a separate `seltrans-trigger` binary or a `seltrans trigger` mode. Neither choice justifies initializing GTK for every invocation. Favor the simplest robust GNOME single-instance / D-Bus activation or local Unix socket design; no general background service framework is necessary.
+The trigger is the separate `seltrans-trigger` binary built from the GUI-free `seltrans-core` crate (selection, classification, domain vocabulary, IPC transport). The resident `seltrans` binary is the only target that depends on GTK/libadwaita, so "the trigger never touches GTK" holds by construction rather than by convention, and CI asserts the trigger binary links no GUI libraries. A per-user Unix-domain socket under `XDG_RUNTIME_DIR`, guarded by an advisory `flock`, provides the simplest robust single-instance mechanism; no general background service framework is necessary.
 
 For the first release, prefer **manual-resident** mode: if no resident instance exists, show a clear not-running notification or nonzero exit and do not silently cold-start a new GUI per shortcut. Optional one-time auto-start may be introduced if it reliably starts only one resident instance. Closing the result view should hide/reuse it; quitting the application is an explicit separate action. Multiple successive requests must not create additional windows. This is a product requirement, not a late optimization.
 
@@ -414,25 +414,27 @@ Examples:
 
 ## 15. Proposed source layout
 
-This is directional, not frozen:
+This is directional, not frozen. The current workspace already separates the
+GUI-free core from the application:
 
 ```text
-src/
-  main.rs
-  lib.rs
-  domain/
-  selection/
-  analysis/
-  providers/
-    llm/
-    dictionary/
-    speech/
-  storage/
-  ui/
-  config/
+crates/
+  seltrans-core/           # no GUI dependencies; builds seltrans-trigger
+    src/
+      lib.rs
+      classifier.rs
+      domain.rs
+      selection.rs
+      ipc.rs
+      bin/seltrans-trigger.rs
+  seltrans/                # GTK4/libadwaita resident application
+    src/
+      main.rs
+      ui.rs
+    # later: analysis/, providers/, storage/, config/ (also GUI-free where possible)
 ```
 
-Prefer narrow provider traits and domain-level results over provider-specific types leaking across the application.
+Prefer narrow provider traits and domain-level results over provider-specific types leaking across the application. New non-UI logic belongs in `seltrans-core` (or a sibling core crate) so the warm path and future CLI tooling stay GUI-free.
 
 ## 16. Architectural guardrails
 

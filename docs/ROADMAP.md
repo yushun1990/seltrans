@@ -8,13 +8,16 @@ The roadmap is organized as vertical slices. A milestone should produce a usable
 - [x] Architecture boundaries
 - [x] Initial roadmap
 - [x] Minimal Rust crate
-- [ ] CI: format / check / test
-- [ ] Development prerequisites for Fedora documented
+- [x] CI: format / check / test (workflow added; green run pending)
+- [x] Development prerequisites for Fedora documented
 - [x] Initial UI wireframe and interaction ADR recorded
 
 Exit condition: a clean baseline repository that agents and humans can build on without re-inventing product intent.
 
 ## M1 — Selection to native window
+
+Implementation proposed in the M1 PR; Fedora desktop acceptance is still pending.
+See [M1 setup and manual acceptance](M1.md).
 
 Goal:
 
@@ -24,19 +27,19 @@ start seltrans once -> select text -> Alt+Q -> send selection to existing GTK wi
 
 Tasks:
 
-- SelectionProvider trait
-- `wl-paste --primary --no-newline` backend
-- resident GTK application and a lightweight CLI/trigger invocation path
-- local IPC (GNOME single-instance activation/D-Bus or Unix socket)
-- capture selection before focus shifts to the popup
-- reuse the same result window on every repeated invocation
-- manual-resident startup behavior and clear not-running error
-- tests for repeated triggers, stale request suppression, window reuse
-- empty-selection error
-- word/passage classifier
-- GTK4/libadwaita application shell
-- loading/result/error states
-- documented GNOME `Alt+Q` custom-shortcut setup
+- [x] SelectionProvider trait
+- [x] `wl-paste --primary --no-newline` backend
+- [x] resident GTK application and a lightweight CLI/trigger invocation path
+- [x] local IPC (private Unix socket)
+- [x] capture selection before focus shifts to the popup
+- [x] reuse the same result window on every repeated invocation (code path; desktop check pending)
+- [x] manual-resident startup behavior and clear not-running error
+- [ ] integration tests for repeated triggers, stale provider results, window reuse (manual checks pending)
+- [x] empty-selection error
+- [x] word/passage classifier
+- [x] GTK4/libadwaita application shell
+- [ ] provider loading/result/error states (M2)
+- [x] documented GNOME `Alt+Q` custom-shortcut setup
 
 Exit condition: after one manual start, repeated shortcuts show the current selection in the same GTK window, without repeating GUI initialization or creating duplicate windows.
 

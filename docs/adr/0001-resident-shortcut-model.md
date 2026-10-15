@@ -21,7 +21,7 @@ Adopt a **resident single-instance application + lightweight trigger** model sta
 6. The main window can be hidden and shown again. An explicit Quit ends the resident process.
 7. A newer invocation supersedes an older one; asynchronous older results must not overwrite current content.
 
-The trigger can be `seltrans trigger` or a tiny `seltrans-trigger` executable. Prefer the simplest reliable single-instance mechanism compatible with GTK/GIO/GNOME, for example application IPC over the session D-Bus or a Unix-domain socket. Do not introduce a general-purpose daemon framework merely to satisfy this requirement.
+The trigger is the separate `seltrans-trigger` executable from the GUI-free `seltrans-core` crate, so the warm path never links GTK/libadwaita by construction, not merely by convention. (The alternatives — a `seltrans trigger` submode of the GUI binary — were rejected because the shared dependency tree would keep the per-invocation dynamic-linking cost of the GUI on every Alt+Q.) The single-instance mechanism is a per-user Unix-domain socket under `XDG_RUNTIME_DIR` guarded by an advisory `flock`; no general-purpose daemon framework is introduced for this.
 
 ## Startup and unavailable-app behavior
 
