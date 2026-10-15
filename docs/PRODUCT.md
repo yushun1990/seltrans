@@ -36,6 +36,8 @@ seltrans MUST NOT automatically translate on clipboard or selection changes.
 
 The desktop environment owns global shortcut registration. v0.1 does not implement its own global-hotkey daemon.
 
+**Warm invocation contract:** launch the app once, then every subsequent `Alt+Q` sends the new selection to the running instance and updates the existing window. A lightweight trigger process is acceptable; repeated GTK cold starts, window duplication or delayed selection capture after focus change are not. If automatic first activation cannot be made reliable and fast, require the user to start the resident app manually.
+
 ## 4. Selection modes
 
 Mode selection is automatic. The user should not choose "word mode" or "passage mode" manually.
@@ -374,11 +376,7 @@ Desired behavior:
 - network analysis may complete asynchronously;
 - repeated invocations should not require expensive process initialization once a resident architecture is introduced.
 
-v0.1 may be a one-shot process.
-
-If startup + TLS + GTK initialization becomes a noticeable part of latency, v0.2 may introduce a resident process with a lightweight IPC command.
-
-Do not introduce a daemon before measurement shows it is useful.
+v0.1 must preserve the resident app + lightweight IPC trigger behavior defined in [ADR 0001](adr/0001-resident-shortcut-model.md). Startup is a one-time cost. Repeated `Alt+Q` invocations must not recreate GTK/application state, open more result windows or wait for a full process cold start. The first-version policy may require manual startup. Optimize provider/TLS latency independently after measurement.
 
 ## 20. Error handling
 
@@ -408,7 +406,10 @@ The first useful vertical slice is complete when, on Fedora/GNOME/Wayland:
 7. a GTK4/libadwaita result window presents the response;
 8. at least one learning item can be saved to local SQLite;
 9. the saved item retains its source context;
-10. no clipboard-change monitoring is required.
+10. no clipboard-change monitoring is required;
+11. with the app running, repeated `Alt+Q` updates the **same** window through IPC without a new GTK cold start;
+12. new requests supersede old in-flight responses and selection is captured before the popup gains focus;
+13. with the app not running, manual-resident mode fails clearly rather than silently starting a fresh GUI for each shortcut.
 
 ## 22. Explicit non-goals for v0.1
 

@@ -10,6 +10,7 @@ The roadmap is organized as vertical slices. A milestone should produce a usable
 - [x] Minimal Rust crate
 - [ ] CI: format / check / test
 - [ ] Development prerequisites for Fedora documented
+- [x] Initial UI wireframe and interaction ADR recorded
 
 Exit condition: a clean baseline repository that agents and humans can build on without re-inventing product intent.
 
@@ -18,20 +19,26 @@ Exit condition: a clean baseline repository that agents and humans can build on 
 Goal:
 
 ```text
-select text -> invoke seltrans -> see the exact selection in GTK
+start seltrans once -> select text -> Alt+Q -> send selection to existing GTK window
 ```
 
 Tasks:
 
 - SelectionProvider trait
 - `wl-paste --primary --no-newline` backend
+- resident GTK application and a lightweight CLI/trigger invocation path
+- local IPC (GNOME single-instance activation/D-Bus or Unix socket)
+- capture selection before focus shifts to the popup
+- reuse the same result window on every repeated invocation
+- manual-resident startup behavior and clear not-running error
+- tests for repeated triggers, stale request suppression, window reuse
 - empty-selection error
 - word/passage classifier
 - GTK4/libadwaita application shell
 - loading/result/error states
 - documented GNOME `Alt+Q` custom-shortcut setup
 
-Exit condition: the shortcut reliably opens a native result window containing the current selection.
+Exit condition: after one manual start, repeated shortcuts show the current selection in the same GTK window, without repeating GUI initialization or creating duplicate windows.
 
 ## M2 — Passage translation
 
@@ -154,14 +161,13 @@ Exit condition: saved reading discoveries can be retained through spaced repetit
 
 ## M9 — Latency optimization
 
-Only after measurement.
+Measure and tune the already resident architecture; **do not defer residency or IPC until M9**.
 
 Potential work:
 
 - persistent HTTP client reuse
 - dictionary cache
-- resident application process
-- D-Bus or Unix-socket activation
+- warm-request performance instrumentation
 - prewarmed model/provider connection where possible
 
 Exit condition: common invocations feel immediate, without unnecessary architectural complexity.

@@ -16,6 +16,8 @@ Before making product or architecture changes, read:
 2. `docs/PRODUCT.md`
 3. `docs/ARCHITECTURE.md`
 4. `docs/ROADMAP.md`
+5. `docs/adr/0001-resident-shortcut-model.md`
+6. `docs/UI_REFERENCES.md`
 
 ## Product invariants
 
@@ -29,6 +31,8 @@ Before making product or architecture changes, read:
 8. LLM output is not an authoritative source of IPA/pronunciation facts.
 9. Learning data is local-first.
 10. The first platform is Fedora/GNOME/Wayland.
+11. The GUI is resident after first launch: Alt+Q submits new text to the running instance through IPC, reusing a single result window; no repeated GTK cold starts.
+12. Default first-version startup may be manual. Selection must be captured before the popup changes focus.
 
 ## Engineering principles
 
@@ -38,7 +42,7 @@ Before making product or architecture changes, read:
 - Keep persistence models from becoming the public domain API.
 - Prefer structured provider responses and validate them.
 - Make partial provider failure degradable where possible.
-- Measure latency before adding a daemon or resident architecture.
+- Follow [ADR 0001](docs/adr/0001-resident-shortcut-model.md) for the mandatory resident model. Measure and optimize warm invocation latency without introducing unrelated daemon infrastructure.
 - Do not add abstractions that have no current consumer merely for theoretical portability.
 
 ## Initial implementation direction

@@ -17,32 +17,33 @@ desktop shortcut
 
 ## 2. Initial runtime shape
 
-v0.1 may be a one-shot desktop process.
+**Accepted ADR:** [0001 — Resident shortcut model](adr/0001-resident-shortcut-model.md).
+
+The user launches `seltrans` once. The running application owns GTK, its one reusable result window, current request state, configuration, provider clients, and learning storage. A lightweight per-invocation trigger (possibly a short-lived CLI mode of the same executable) reads the active selection **before any focus change** and sends that exact text to the resident instance over local IPC.
 
 ```text
 GNOME Alt+Q
     |
     v
-seltrans
+lightweight trigger -- read current selection BEFORE changing focus
     |
-    +--> SelectionProvider
-    |
-    +--> SelectionClassifier
-    |
-    +--> AnalysisService
-    |       |
-    |       +--> Translation/LLM Provider
-    |       +--> Dictionary Provider
-    |       +--> Speech Provider (on demand)
-    |
-    +--> GTK4/libadwaita UI
-    |
-    +--> LearningRepository (SQLite)
+    +--> IPC request (selection + request id)
+              |
+              v
+      resident seltrans process (started once)
+              |
+              +--> reuse existing GTK result window
+              +--> SelectionClassifier
+              +--> AnalysisService
+              |       +--> Translation / LLM provider
+              |       +--> Dictionary provider
+              |       +--> Speech provider (on demand)
+              +--> LearningRepository (SQLite)
 ```
 
-A daemon is deliberately not part of the first architecture.
+The trigger may be a separate `seltrans-trigger` binary or a `seltrans trigger` mode. Neither choice justifies initializing GTK for every invocation. Favor the simplest robust GNOME single-instance / D-Bus activation or local Unix socket design; no general background service framework is necessary.
 
-If measured startup latency is unacceptable, a later resident process may own GTK, HTTP connection pools, configuration, and caches, with a small D-Bus or Unix-socket activation path.
+For the first release, prefer **manual-resident** mode: if no resident instance exists, show a clear not-running notification or nonzero exit and do not silently cold-start a new GUI per shortcut. Optional one-time auto-start may be introduced if it reliably starts only one resident instance. Closing the result view should hide/reuse it; quitting the application is an explicit separate action. Multiple successive requests must not create additional windows. This is a product requirement, not a late optimization.
 
 ## 3. Core boundaries
 
@@ -377,22 +378,20 @@ Cancellation matters: if the user closes a result or triggers a new analysis, st
 
 ## 12. Latency strategy
 
-Optimize only after measuring.
+The resident-instance model is mandatory from the first interactive vertical slice. Measure the *warm invocation path* separately from the one-time application startup and provider/network latency.
 
-v0.1:
+On each warm `Alt+Q`:
 
-- process start;
-- capture selection;
-- show loading UI quickly;
-- perform network analysis asynchronously;
-- render completed result.
+- capture the current selection **before** the result window receives focus;
+- send it through local IPC to the existing process;
+- reuse GTK state and the same result window;
+- show the new source/visible loading state promptly;
+- perform network analysis asynchronously using reusable clients;
+- never let an older response overwrite a newer invocation.
 
-Potential v0.2 if measurements justify it:
+A very small short-lived trigger process is acceptable. Re-launching GTK/application initialization for each shortcut is not. If startup/on-demand activation feels slow, require a manual once-per-session start rather than compromising this flow.
 
-- resident process;
-- reused HTTP client and TLS connections;
-- cached dictionary results;
-- D-Bus/Unix socket activation.
+A resident HTTP client, connection reuse and dictionary caches are implementation concerns to be measured and tuned; the single-instance invariant is not optional.
 
 ## 13. Failure isolation
 
@@ -442,7 +441,9 @@ Do not:
 - couple GTK widgets directly to HTTP response JSON;
 - couple SQLite rows directly to provider payloads;
 - make LLM output authoritative phonetic data;
-- add a daemon before latency measurement;
+- introduce a second full GUI process on every shortcut;
+- allow the selection to be replaced by changing focus before capture;
+- treat a one-shot UI as the production interaction model;
 - monitor the clipboard continuously;
 - implement every provider before the first end-to-end flow works;
 - turn v0.1 into a general-purpose language-learning platform.

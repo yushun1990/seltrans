@@ -20,6 +20,7 @@ Reading -> Understand -> Discover -> Capture -> Remember
 
 - **Explicit invocation only.** seltrans never translates merely because the clipboard changed.
 - **One shortcut everywhere.** The desktop environment owns the global shortcut; seltrans only handles the requested selection.
+- **Resident after launch.** Repeated `Alt+Q` uses an already-running instance and reuses the existing result window; it must not cold-start the GTK UI on every request.
 - **Single-word and passage selections behave differently.**
 - **Vocabulary is selective; expressions are exhaustive.**
 - **Context matters.** A word's meaning in the selected sentence is more important than a generic first dictionary definition.
@@ -94,17 +95,19 @@ The global shortcut is intentionally configured by the desktop environment rathe
 - [Product requirements](docs/PRODUCT.md)
 - [Architecture](docs/ARCHITECTURE.md)
 - [Roadmap](docs/ROADMAP.md)
+- [UI wireframe reference](docs/UI_REFERENCES.md)
+- [ADR 0001: resident shortcut model](docs/adr/0001-resident-shortcut-model.md)
 
 ## Status
 
 Early design / bootstrap stage. The first milestone is a thin vertical slice:
 
 ```text
-Alt+Q
-  -> read current selection
-  -> classify word vs passage
-  -> translate / analyze
-  -> show GTK result window
+Start `seltrans` once (manually for the initial version)
+Alt+Q -> lightweight trigger reads the current selection
+  -> IPC to the running seltrans instance
+  -> reuse and update the existing GTK result window
+  -> classify word vs passage -> translate / analyze
   -> optionally save a learning item locally
 ```
 
