@@ -64,7 +64,9 @@ pub fn run(receiver: Receiver<Invocation>) {
         source.set_selectable(true);
         content.append(&source);
 
-        let hint = gtk::Label::new(Some("Translation and learning analysis will be added in M2/M3."));
+        let hint = gtk::Label::new(Some(
+            "Translation and learning analysis will be added in M2/M3.",
+        ));
         hint.set_xalign(0.0);
         hint.set_wrap(true);
         hint.add_css_class("dim-label");
