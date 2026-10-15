@@ -27,7 +27,10 @@ pub fn classify_selection(selection: &str) -> Result<SelectionMode, Classificati
     // Only ordinary surrounding punctuation can be stripped; a technical
     // token such as C++ must not silently become a single English word.
     let candidate = text.trim_matches(|c: char| {
-        matches!(c, '"' | '“' | '”' | '(' | ')' | '[' | ']' | '{' | '}' | '.' | ',' | '!' | '?' | ';' | ':')
+        matches!(
+            c,
+            '"' | '“' | '”' | '(' | ')' | '[' | ']' | '{' | '}' | '.' | ',' | '!' | '?' | ';' | ':'
+        )
     });
     let letters: Vec<char> = candidate.chars().collect();
     let is_word = !letters.is_empty()
@@ -53,20 +56,39 @@ mod tests {
 
     #[test]
     fn classifies_words_with_context_punctuation() {
-        for text in ["acknowledged", " running ", "don't", "well-known", "\"hello,\""] {
+        for text in [
+            "acknowledged",
+            " running ",
+            "don't",
+            "well-known",
+            "\"hello,\"",
+        ] {
             assert_eq!(classify_selection(text), Ok(SelectionMode::Word), "{text}");
         }
     }
 
     #[test]
     fn classifies_passages_and_non_words() {
-        for text in ["A short sentence.", "not so much A as B", "HTTP/2", "C++", "..."] {
-            assert_eq!(classify_selection(text), Ok(SelectionMode::Passage), "{text}");
+        for text in [
+            "A short sentence.",
+            "not so much A as B",
+            "HTTP/2",
+            "C++",
+            "...",
+        ] {
+            assert_eq!(
+                classify_selection(text),
+                Ok(SelectionMode::Passage),
+                "{text}"
+            );
         }
     }
 
     #[test]
     fn rejects_whitespace_only_selection() {
-        assert_eq!(classify_selection("  \n\t"), Err(ClassificationError::EmptySelection));
+        assert_eq!(
+            classify_selection("  \n\t"),
+            Err(ClassificationError::EmptySelection)
+        );
     }
 }
