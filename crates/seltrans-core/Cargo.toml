@@ -2,9 +2,16 @@
 name = "seltrans-core"
 version = "0.1.0"
 edition = "2024"
-description = "Selection capture, classification and resident IPC for seltrans."
+description = "Selection capture, classification, provider access and resident IPC for seltrans."
 repository = "https://github.com/yushun1990/seltrans"
 publish = false
 
 [dependencies]
 fs4 = "0.13"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.9"
+ureq = { version = "2", default-features = false, features = ["tls", "json"] }
+
+[dev-dependencies]
+tempfile = "3"

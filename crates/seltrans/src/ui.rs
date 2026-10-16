@@ -1,15 +1,47 @@
 //! One reusable native GTK/libadwaita window, owned by the resident process.
+//! Passage selections are translated off the GTK thread; completions are
+//! fenced by invocation sequence so a stale response never overwrites a
+//! newer invocation.
 
+use std::cell::Cell;
 use std::rc::Rc;
+use std::sync::Arc;
 
 use adw::prelude::*;
 use adw::{glib, gtk};
 
+use seltrans_core::analysis::{Translation, TranslationProvider};
 use seltrans_core::classifier::classify_selection;
 use seltrans_core::domain::SelectionMode;
 use seltrans_core::ipc::Invocation;
 
-pub fn run(receiver: async_channel::Receiver<Invocation>) {
+/// Why a translation could not be produced, combining configuration
+/// problems (resident startup) with provider failures (request time).
+enum AnalysisFailure {
+    NotConfigured(String),
+    Provider(seltrans_core::analysis::ProviderError),
+}
+
+impl std::fmt::Display for AnalysisFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::NotConfigured(reason) => write!(f, "translation is unavailable: {reason}"),
+            Self::Provider(error) => write!(f, "{error}"),
+        }
+    }
+}
+
+/// A worker result tagged with the invocation it belongs to; the display
+/// side drops anything whose sequence is no longer current.
+struct TranslationOutcome {
+    sequence: u64,
+    result: Result<Translation, AnalysisFailure>,
+}
+
+pub fn run(
+    receiver: async_channel::Receiver<Invocation>,
+    provider: Result<Arc<dyn TranslationProvider>, String>,
+) {
     let app = adw::Application::builder()
         .application_id("io.github.yushun1990.seltrans")
         .build();
@@ -63,13 +95,38 @@ pub fn run(receiver: async_channel::Receiver<Invocation>) {
         source.set_selectable(true);
         content.append(&source);
 
-        let hint = gtk::Label::new(Some(
-            "Translation and learning analysis will be added in M2/M3.",
-        ));
-        hint.set_xalign(0.0);
-        hint.set_wrap(true);
-        hint.add_css_class("dim-label");
-        content.append(&hint);
+        let translation_heading = gtk::Label::new(Some("Translation"));
+        translation_heading.set_xalign(0.0);
+        translation_heading.add_css_class("title-3");
+        translation_heading.set_visible(false);
+        content.append(&translation_heading);
+
+        let loading = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(8)
+            .visible(false)
+            .build();
+        let spinner = gtk::Spinner::new();
+        loading.append(&spinner);
+        let loading_label = gtk::Label::new(Some("Translating…"));
+        loading_label.add_css_class("dim-label");
+        loading.append(&loading_label);
+        content.append(&loading);
+
+        let translation = gtk::Label::new(None);
+        translation.set_xalign(0.0);
+        translation.set_yalign(0.0);
+        translation.set_wrap(true);
+        translation.set_selectable(true);
+        translation.set_visible(false);
+        content.append(&translation);
+
+        let error = gtk::Label::new(None);
+        error.set_xalign(0.0);
+        error.set_wrap(true);
+        error.add_css_class("error");
+        error.set_visible(false);
+        content.append(&error);
 
         let scroller = gtk::ScrolledWindow::builder()
             .vexpand(true)
@@ -97,11 +154,21 @@ pub fn run(receiver: async_channel::Receiver<Invocation>) {
         // hold keeps the manual-resident process alive even while hidden.
         let keep_alive = app.hold();
 
-        // Arrivals wake the main loop only when a trigger is actually
-        // delivered; there is no polling while idle. A burst of triggers is
-        // coalesced to its newest invocation, and `displayed_sequence` keeps
-        // stale deliveries inert — the same fencing that will order
-        // out-of-order async analysis results in M2.
+        let (outcome_sender, outcome_receiver) = async_channel::bounded::<TranslationOutcome>(64);
+        let current_sequence = Rc::new(Cell::new(0_u64));
+
+        // Widgets are glib-refcounted; hand the outcome task its own clones.
+        let outcome_spinner = spinner.clone();
+        let outcome_loading = loading.clone();
+        let outcome_translation = translation.clone();
+        let outcome_error = error.clone();
+        let outcome_sequence = current_sequence.clone();
+
+        // Trigger arrivals wake the main loop only when a selection is
+        // actually delivered. A burst is coalesced to its newest invocation,
+        // which becomes the current sequence every later completion is
+        // compared against.
+        let provider = provider.clone();
         glib::spawn_future_local(async move {
             let _keep_alive = keep_alive;
             let mut displayed_sequence = 0_u64;
@@ -116,6 +183,8 @@ pub fn run(receiver: async_channel::Receiver<Invocation>) {
                     }
                 }
                 displayed_sequence = latest.sequence;
+                current_sequence.set(latest.sequence);
+
                 let classification = classify_selection(&latest.text);
                 let label = match classification {
                     Ok(SelectionMode::Word) => "Single word",
@@ -124,8 +193,69 @@ pub fn run(receiver: async_channel::Receiver<Invocation>) {
                 };
                 mode.set_text(&format!("{label} · request {}", latest.sequence));
                 source.set_text(&latest.text);
-                // This is the same window object constructed once at startup.
-                window.present();
+                spinner.stop();
+                translation.set_visible(false);
+                error.set_visible(false);
+
+                match classification {
+                    Ok(SelectionMode::Passage) => {
+                        // This is the same window object constructed once at
+                        // startup; show the source immediately and let the
+                        // translation fill in asynchronously.
+                        window.present();
+                        translation_heading.set_visible(true);
+                        loading.set_visible(true);
+                        spinner.start();
+                        loading_label.set_text("Translating…");
+                        let sender = outcome_sender.clone();
+                        let provider = provider.clone();
+                        let text = latest.text.clone();
+                        // The network call happens on its own worker thread;
+                        // the GTK thread only ever receives the outcome.
+                        std::thread::spawn(move || {
+                            let result = match provider {
+                                Ok(provider) => provider
+                                    .translate_passage(&text)
+                                    .map_err(AnalysisFailure::Provider),
+                                Err(reason) => Err(AnalysisFailure::NotConfigured(reason)),
+                            };
+                            let _ = sender.send_blocking(TranslationOutcome {
+                                sequence: latest.sequence,
+                                result,
+                            });
+                        });
+                    }
+                    _ => {
+                        // Word mode: the detailed lexical view is M4; M2
+                        // intentionally leaves single-word selections alone.
+                        translation_heading.set_visible(false);
+                        loading.set_visible(false);
+                    }
+                }
+            }
+        });
+
+        // Translations complete out of band and may finish after a newer
+        // trigger; only the outcome matching the current sequence is shown.
+        glib::spawn_future_local(async move {
+            while let Ok(outcome) = outcome_receiver.recv().await {
+                if outcome.sequence != outcome_sequence.get() {
+                    continue;
+                }
+                outcome_spinner.stop();
+                outcome_loading.set_visible(false);
+                match outcome.result {
+                    Ok(translated) => {
+                        outcome_error.set_visible(false);
+                        outcome_translation.set_text(&translated.text);
+                        outcome_translation.set_visible(true);
+                    }
+                    Err(failure) => {
+                        outcome_translation.set_visible(false);
+                        outcome_error.set_text(&failure.to_string());
+                        outcome_error.set_visible(true);
+                    }
+                }
             }
         });
         // Manual startup intentionally leaves the result window hidden until
