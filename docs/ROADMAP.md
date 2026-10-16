@@ -38,12 +38,15 @@ Tasks:
 - [x] empty-selection error
 - [x] word/passage classifier
 - [x] GTK4/libadwaita application shell
-- [ ] provider loading/result/error states (M2)
+- [x] provider loading/result/error states (delivered in M2)
 - [x] documented GNOME `Alt+Q` custom-shortcut setup
 
 Exit condition: after one manual start, repeated shortcuts show the current selection in the same GTK window, without repeating GUI initialization or creating duplicate windows.
 
 ## M2 — Passage translation
+
+Implementation proposed in the M2 PR; Fedora desktop acceptance is still pending.
+See [M2 setup and manual acceptance](M2.md).
 
 Goal:
 
@@ -53,15 +56,15 @@ select passage -> Alt+Q -> Chinese translation
 
 Tasks:
 
-- config loading
-- OpenAI-compatible provider
-- API key from environment
-- async request without blocking GTK
-- timeout/cancellation
-- structured response validation
-- original + translation view
+- [x] config loading
+- [x] OpenAI-compatible provider
+- [x] API key from environment
+- [x] async request without blocking GTK
+- [x] timeout/cancellation (per-request timeout; stale completions fenced by invocation sequence)
+- [x] structured response validation
+- [x] original + translation view
 
-Exit condition: useful passage translation works end to end.
+Exit condition: useful passage translation works end to end (code complete; desktop check pending).
 
 ## M3 — Reading analysis
 

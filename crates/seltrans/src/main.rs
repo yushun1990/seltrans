@@ -1,6 +1,10 @@
 use std::process::ExitCode;
+use std::sync::Arc;
 
+use seltrans_core::analysis::TranslationProvider;
+use seltrans_core::config;
 use seltrans_core::ipc::{self, Invocation};
+use seltrans_core::openai::OpenAiCompatibleProvider;
 
 mod ui;
 
@@ -42,10 +46,30 @@ fn run_resident() -> Result<(), String> {
             })
         })
     });
+    // A missing or invalid config must not break the resident M1 behavior;
+    // the reason is surfaced in the result window when a passage arrives.
+    let provider: Result<Arc<dyn TranslationProvider>, String> = match config::load() {
+        Ok(config) => {
+            let provider_name = config.provider.name();
+            match config.provider {
+                config::ProviderConfig::OpenAiCompatible(openai) => {
+                    println!(
+                        "seltrans: provider {provider_name} at {} (model {}, key from {})",
+                        openai.base_url, openai.model, openai.api_key_env
+                    );
+                    Ok(Arc::new(OpenAiCompatibleProvider::new(openai)))
+                }
+            }
+        }
+        Err(error) => {
+            eprintln!("seltrans: {error}");
+            Err(error.to_string())
+        }
+    };
     println!(
         "seltrans is resident. Set GNOME Alt+Q to seltrans-trigger; Ctrl+C stops this process."
     );
-    ui::run(receiver);
+    ui::run(receiver, provider);
     // Do not remove the socket until the GTK resident instance has stopped.
     drop(socket_guard);
     Ok(())
