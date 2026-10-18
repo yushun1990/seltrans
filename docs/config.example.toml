@@ -1,0 +1,21 @@
+# seltrans provider configuration.
+
+# Copy to $XDG_CONFIG_HOME/seltrans/config.toml (usually
+# ~/.config/seltrans/config.toml) and fill in real values. Never put the API
+# key itself in this file; name the environment variable to read it from.
+
+provider = "openai-compatible"
+
+[providers.openai-compatible]
+# Any OpenAI-compatible chat-completions API root, without a trailing slash.
+# Examples: https://api.openai.com/v1, https://api.deepseek.com/v1,
+# or a local server such as http://127.0.0.1:11434/v1.
+base_url = "https://example.invalid/v1"
+model = "model-name"
+
+# Environment variable the resident process reads the key from at request
+# time. Optional; defaults to SELTRANS_API_KEY.
+api_key_env = "SELTRANS_API_KEY"
+
+# Overall per-request timeout in seconds. Optional; defaults to 60.
+timeout_secs = 60

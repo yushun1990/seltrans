@@ -322,7 +322,7 @@ Fallback:
 
 Prefer API keys from environment variables or an OS secret store.
 
-Example config may reference:
+Example config may reference (see [config.example.toml](config.example.toml)):
 
 ```toml
 provider = "openai-compatible"
@@ -331,9 +331,11 @@ provider = "openai-compatible"
 base_url = "https://example.invalid/v1"
 model = "model-name"
 api_key_env = "SELTRANS_API_KEY"
+timeout_secs = 60
 ```
 
-Never commit real keys.
+Never commit real keys. A missing or invalid config degrades translation to
+an in-window error; it must not break the resident selection flow.
 
 ## 10. UI architecture
 
@@ -372,7 +374,11 @@ Likely implementation options:
 - Tokio runtime integrated with application tasks;
 - GLib async bridging where appropriate.
 
-The exact runtime arrangement should be chosen during implementation, not assumed by the product spec.
+The exact runtime arrangement should be chosen during implementation, not assumed by the product spec. M2 chose the second shape: provider calls are
+synchronous methods on `seltrans-core` types, executed on a per-request
+worker thread, with outcomes delivered back to the GTK main context through
+a channel and fenced by invocation sequence. This keeps the core crate free
+of an async runtime while the UI thread never blocks.
 
 Cancellation matters: if the user closes a result or triggers a new analysis, stale network results should not overwrite newer UI state.
 
@@ -423,6 +429,9 @@ crates/
     src/
       lib.rs
       classifier.rs
+      config.rs            # XDG config.toml loading and validation
+      analysis.rs          # TranslationProvider trait + domain results/errors
+      openai.rs            # OpenAI-compatible HTTP provider (the only HTTP dialect)
       domain.rs
       selection.rs
       ipc.rs
@@ -431,7 +440,7 @@ crates/
     src/
       main.rs
       ui.rs
-    # later: analysis/, providers/, storage/, config/ (also GUI-free where possible)
+    # later: storage/ (GUI-free where possible, likely in core)
 ```
 
 Prefer narrow provider traits and domain-level results over provider-specific types leaking across the application. New non-UI logic belongs in `seltrans-core` (or a sibling core crate) so the warm path and future CLI tooling stay GUI-free.
