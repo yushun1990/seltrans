@@ -7,14 +7,21 @@ use std::net::TcpListener;
 use std::thread;
 use std::time::Duration;
 
-use seltrans_core::analysis::{ProviderError, TranslationProvider};
+use seltrans_core::analysis::{ExpressionKind, ProviderError, TranslationProvider};
 use seltrans_core::config::OpenAiCompatibleConfig;
 use seltrans_core::openai::OpenAiCompatibleProvider;
 
 /// Per-test unique env var; edition 2024 requires an unsafe block because
 /// mutating the process environment is unsound under parallelism. The name
 /// is unique to this test binary so it cannot race with anything.
-const KEY_ENV: &str = "SELTRANS_M2_TEST_API_KEY";
+const KEY_ENV: &str = "SELTRANS_M3_TEST_API_KEY";
+
+const ANALYSIS_CONTENT: &str = "{\"schema_version\":1,\
+\"translation\":\"与其说是性能问题，不如说是正确性问题。\",\
+\"vocabulary\":[{\"surface\":\"regressions\",\"lemma\":\"regression\",\
+\"contextual_meaning\":\"回归（缺陷）\",\"reason\":\"技术语境\"}],\
+\"expressions\":[{\"surface\":\"not so much A as B\",\"kind\":\"sentence_pattern\",\
+\"meaning\":\"与其说是 A，不如说是 B\",\"explanation\":\"句型\"}]}";
 
 struct MockServer {
     base_url: String,
@@ -105,17 +112,28 @@ fn set_test_key() {
 }
 
 #[test]
-fn translates_passage_and_sends_expected_request() {
+fn analyzes_passage_and_sends_expected_request() {
     set_test_key();
-    let content =
-        "{\"schema_version\":1,\"translation\":\"这不是一个性能问题，而是一个正确性问题。\"}";
-    let server = mock_server(Some(http_response("200 OK", &completion_body(content))));
+    let server = mock_server(Some(http_response(
+        "200 OK",
+        &completion_body(ANALYSIS_CONTENT),
+    )));
 
-    let translation = provider(&server.base_url, 10)
-        .translate_passage("This is not a performance problem.")
+    let analysis = provider(&server.base_url, 10)
+        .analyze_passage("This is not so much a performance problem as a correctness problem.")
         .unwrap();
 
-    assert_eq!(translation.text, "这不是一个性能问题，而是一个正确性问题。");
+    assert_eq!(
+        analysis.translation,
+        "与其说是性能问题，不如说是正确性问题。"
+    );
+    assert_eq!(analysis.vocabulary.len(), 1);
+    assert_eq!(analysis.vocabulary[0].surface, "regressions");
+    assert_eq!(
+        analysis.expressions[0].kind,
+        ExpressionKind::SentencePattern
+    );
+
     let request = server.request.recv_timeout(Duration::from_secs(5)).unwrap();
     assert!(
         request.starts_with("POST /chat/completions HTTP/1.1"),
@@ -129,26 +147,47 @@ fn translates_passage_and_sends_expected_request() {
     assert_eq!(body["messages"][1]["role"], "user");
     assert_eq!(
         body["messages"][1]["content"],
-        "This is not a performance problem."
+        "This is not so much a performance problem as a correctness problem."
     );
-    assert!(
-        body["messages"][0]["content"]
-            .as_str()
-            .unwrap()
-            .contains("Simplified Chinese")
-    );
+    // The prompt must encode both product rules for the notes sections.
+    let system_prompt = body["messages"][0]["content"].as_str().unwrap();
+    assert!(system_prompt.contains("Simplified Chinese"));
+    assert!(system_prompt.contains("SELECTIVE"));
+    assert!(system_prompt.contains("sentence_pattern"));
 }
 
 #[test]
-fn recovers_translation_from_fenced_model_output() {
+fn recovers_analysis_from_fenced_model_output() {
     set_test_key();
-    let content = "```json\n{\"schema_version\":1,\"translation\":\"好的\"}\n```";
+    let content = format!("```json\n{ANALYSIS_CONTENT}\n```");
+    let server = mock_server(Some(http_response("200 OK", &completion_body(&content))));
+
+    let analysis = provider(&server.base_url, 10)
+        .analyze_passage("OK")
+        .unwrap();
+    assert_eq!(
+        analysis.translation,
+        "与其说是性能问题，不如说是正确性问题。"
+    );
+    assert_eq!(analysis.vocabulary.len(), 1);
+}
+
+#[test]
+fn degrades_gracefully_when_notes_are_invalid_or_missing() {
+    set_test_key();
+    // Translation stays usable when individual notes are malformed and
+    // when whole sections are absent.
+    let content = "{\"schema_version\":1,\"translation\":\"好的\",\
+\"vocabulary\":[{\"surface\":\"orphan\"}],\
+\"expressions\":[{\"surface\":\"x\",\"kind\":\"not_a_kind\",\"meaning\":\"y\"}]}";
     let server = mock_server(Some(http_response("200 OK", &completion_body(content))));
 
-    let translation = provider(&server.base_url, 10)
-        .translate_passage("OK")
+    let analysis = provider(&server.base_url, 10)
+        .analyze_passage("hi")
         .unwrap();
-    assert_eq!(translation.text, "好的");
+    assert_eq!(analysis.translation, "好的");
+    assert!(analysis.vocabulary.is_empty());
+    assert!(analysis.expressions.is_empty());
 }
 
 #[test]
@@ -160,13 +199,13 @@ fn maps_auth_rate_limit_and_api_errors() {
         "{\"error\":{\"message\":\"bad key\"}}",
     )));
     assert_eq!(
-        provider(&unauthorized.base_url, 10).translate_passage("hi"),
+        provider(&unauthorized.base_url, 10).analyze_passage("hi"),
         Err(ProviderError::Auth { status: 401 })
     );
 
     let limited = mock_server(Some(http_response("429 Too Many Requests", "{}")));
     assert_eq!(
-        provider(&limited.base_url, 10).translate_passage("hi"),
+        provider(&limited.base_url, 10).analyze_passage("hi"),
         Err(ProviderError::RateLimited)
     );
 
@@ -175,7 +214,7 @@ fn maps_auth_rate_limit_and_api_errors() {
         "{\"error\":{\"message\":\"upstream exploded\"}}",
     )));
     assert_eq!(
-        provider(&broken.base_url, 10).translate_passage("hi"),
+        provider(&broken.base_url, 10).analyze_passage("hi"),
         Err(ProviderError::Api {
             status: 500,
             message: "upstream exploded".to_owned()
@@ -194,7 +233,7 @@ fn reports_malformed_payloads() {
     ];
     for content in cases {
         let server = mock_server(Some(http_response("200 OK", &completion_body(&content))));
-        let result = provider(&server.base_url, 10).translate_passage("hi");
+        let result = provider(&server.base_url, 10).analyze_passage("hi");
         assert!(
             matches!(result, Err(ProviderError::MalformedResponse(_))),
             "expected malformed response for {content}"
@@ -206,13 +245,13 @@ fn reports_malformed_payloads() {
 fn times_out_when_the_provider_stalls() {
     set_test_key();
     let server = mock_server(None);
-    let result = provider(&server.base_url, 1).translate_passage("hi");
+    let result = provider(&server.base_url, 1).analyze_passage("hi");
     assert_eq!(result, Err(ProviderError::Timeout { after_secs: 1 }));
 }
 
 #[test]
 fn requires_the_configured_api_key_before_any_request() {
-    let absent = "SELTRANS_M2_KEY_THAT_IS_DEFINITELY_NOT_SET_7F3A";
+    let absent = "SELTRANS_M3_KEY_THAT_IS_DEFINITELY_NOT_SET_7F3A";
     // Not set by this binary; if someone exported it the test would still
     // pass the NotConfigured path only when the variable is truly absent,
     // so assert on the variant, not the whole value.
@@ -223,7 +262,7 @@ fn requires_the_configured_api_key_before_any_request() {
         timeout_secs: 2,
     };
     let error = OpenAiCompatibleProvider::new(config)
-        .translate_passage("hi")
+        .analyze_passage("hi")
         .unwrap_err();
     assert!(matches!(error, ProviderError::MissingApiKey { ref env_var } if env_var == absent));
 }
@@ -233,7 +272,7 @@ fn reports_unreachable_endpoints_as_network_errors() {
     set_test_key();
     // Port 9 (discard) on loopback is closed in containers/CI.
     let error = provider("http://127.0.0.1:9", 2)
-        .translate_passage("hi")
+        .analyze_passage("hi")
         .unwrap_err();
     assert!(matches!(error, ProviderError::Network(_)), "{error}");
 }

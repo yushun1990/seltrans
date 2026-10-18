@@ -1,5 +1,5 @@
 //! One reusable native GTK/libadwaita window, owned by the resident process.
-//! Passage selections are translated off the GTK thread; completions are
+//! Passage selections are analyzed off the GTK thread; completions are
 //! fenced by invocation sequence so a stale response never overwrites a
 //! newer invocation.
 
@@ -10,12 +10,14 @@ use std::sync::Arc;
 use adw::prelude::*;
 use adw::{glib, gtk};
 
-use seltrans_core::analysis::{Translation, TranslationProvider};
+use seltrans_core::analysis::{
+    ExpressionNote, PassageAnalysis, TranslationProvider, VocabularyNote,
+};
 use seltrans_core::classifier::classify_selection;
 use seltrans_core::domain::SelectionMode;
 use seltrans_core::ipc::Invocation;
 
-/// Why a translation could not be produced, combining configuration
+/// Why an analysis could not be produced, combining configuration
 /// problems (resident startup) with provider failures (request time).
 enum AnalysisFailure {
     NotConfigured(String),
@@ -33,9 +35,9 @@ impl std::fmt::Display for AnalysisFailure {
 
 /// A worker result tagged with the invocation it belongs to; the display
 /// side drops anything whose sequence is no longer current.
-struct TranslationOutcome {
+struct AnalysisOutcome {
     sequence: u64,
-    result: Result<Translation, AnalysisFailure>,
+    result: Result<PassageAnalysis, AnalysisFailure>,
 }
 
 pub fn run(
@@ -57,7 +59,7 @@ pub fn run(
             .application(app)
             .title("seltrans")
             .default_width(600)
-            .default_height(390)
+            .default_height(460)
             .build();
         window.set_hide_on_close(true);
 
@@ -95,10 +97,7 @@ pub fn run(
         source.set_selectable(true);
         content.append(&source);
 
-        let translation_heading = gtk::Label::new(Some("Translation"));
-        translation_heading.set_xalign(0.0);
-        translation_heading.add_css_class("title-3");
-        translation_heading.set_visible(false);
+        let translation_heading = section_heading("Translation");
         content.append(&translation_heading);
 
         let loading = gtk::Box::builder()
@@ -108,7 +107,7 @@ pub fn run(
             .build();
         let spinner = gtk::Spinner::new();
         loading.append(&spinner);
-        let loading_label = gtk::Label::new(Some("Translating…"));
+        let loading_label = gtk::Label::new(Some("Analyzing…"));
         loading_label.add_css_class("dim-label");
         loading.append(&loading_label);
         content.append(&loading);
@@ -120,6 +119,16 @@ pub fn run(
         translation.set_selectable(true);
         translation.set_visible(false);
         content.append(&translation);
+
+        let vocabulary_heading = section_heading("Vocabulary");
+        content.append(&vocabulary_heading);
+        let vocabulary_notes = notes_list();
+        content.append(&vocabulary_notes);
+
+        let expressions_heading = section_heading("Expressions");
+        content.append(&expressions_heading);
+        let expression_notes = notes_list();
+        content.append(&expression_notes);
 
         let error = gtk::Label::new(None);
         error.set_xalign(0.0);
@@ -154,13 +163,17 @@ pub fn run(
         // hold keeps the manual-resident process alive even while hidden.
         let keep_alive = app.hold();
 
-        let (outcome_sender, outcome_receiver) = async_channel::bounded::<TranslationOutcome>(64);
+        let (outcome_sender, outcome_receiver) = async_channel::bounded::<AnalysisOutcome>(64);
         let current_sequence = Rc::new(Cell::new(0_u64));
 
         // Widgets are glib-refcounted; hand the outcome task its own clones.
         let outcome_spinner = spinner.clone();
         let outcome_loading = loading.clone();
         let outcome_translation = translation.clone();
+        let outcome_vocabulary_heading = vocabulary_heading.clone();
+        let outcome_vocabulary_notes = vocabulary_notes.clone();
+        let outcome_expressions_heading = expressions_heading.clone();
+        let outcome_expression_notes = expression_notes.clone();
         let outcome_error = error.clone();
         let outcome_sequence = current_sequence.clone();
 
@@ -195,18 +208,22 @@ pub fn run(
                 source.set_text(&latest.text);
                 spinner.stop();
                 translation.set_visible(false);
+                vocabulary_heading.set_visible(false);
+                vocabulary_notes.set_visible(false);
+                expressions_heading.set_visible(false);
+                expression_notes.set_visible(false);
                 error.set_visible(false);
 
                 match classification {
                     Ok(SelectionMode::Passage) => {
                         // This is the same window object constructed once at
                         // startup; show the source immediately and let the
-                        // translation fill in asynchronously.
+                        // analysis fill in asynchronously.
                         window.present();
                         translation_heading.set_visible(true);
                         loading.set_visible(true);
                         spinner.start();
-                        loading_label.set_text("Translating…");
+                        loading_label.set_text("Analyzing…");
                         let sender = outcome_sender.clone();
                         let provider = provider.clone();
                         let text = latest.text.clone();
@@ -215,18 +232,18 @@ pub fn run(
                         std::thread::spawn(move || {
                             let result = match provider {
                                 Ok(provider) => provider
-                                    .translate_passage(&text)
+                                    .analyze_passage(&text)
                                     .map_err(AnalysisFailure::Provider),
                                 Err(reason) => Err(AnalysisFailure::NotConfigured(reason)),
                             };
-                            let _ = sender.send_blocking(TranslationOutcome {
+                            let _ = sender.send_blocking(AnalysisOutcome {
                                 sequence: latest.sequence,
                                 result,
                             });
                         });
                     }
                     _ => {
-                        // Word mode: the detailed lexical view is M4; M2
+                        // Word mode: the detailed lexical view is M4; M3
                         // intentionally leaves single-word selections alone.
                         translation_heading.set_visible(false);
                         loading.set_visible(false);
@@ -235,7 +252,7 @@ pub fn run(
             }
         });
 
-        // Translations complete out of band and may finish after a newer
+        // Analyses complete out of band and may finish after a newer
         // trigger; only the outcome matching the current sequence is shown.
         glib::spawn_future_local(async move {
             while let Ok(outcome) = outcome_receiver.recv().await {
@@ -245,13 +262,23 @@ pub fn run(
                 outcome_spinner.stop();
                 outcome_loading.set_visible(false);
                 match outcome.result {
-                    Ok(translated) => {
+                    Ok(analysis) => {
                         outcome_error.set_visible(false);
-                        outcome_translation.set_text(&translated.text);
+                        outcome_translation.set_text(&analysis.translation);
                         outcome_translation.set_visible(true);
+                        render_vocabulary(&outcome_vocabulary_notes, &analysis.vocabulary);
+                        outcome_vocabulary_heading.set_visible(!analysis.vocabulary.is_empty());
+                        outcome_vocabulary_notes.set_visible(!analysis.vocabulary.is_empty());
+                        render_expressions(&outcome_expression_notes, &analysis.expressions);
+                        outcome_expressions_heading.set_visible(!analysis.expressions.is_empty());
+                        outcome_expression_notes.set_visible(!analysis.expressions.is_empty());
                     }
                     Err(failure) => {
                         outcome_translation.set_visible(false);
+                        outcome_vocabulary_heading.set_visible(false);
+                        outcome_vocabulary_notes.set_visible(false);
+                        outcome_expressions_heading.set_visible(false);
+                        outcome_expression_notes.set_visible(false);
                         outcome_error.set_text(&failure.to_string());
                         outcome_error.set_visible(true);
                     }
@@ -262,4 +289,120 @@ pub fn run(
         // the first explicit selection trigger.
     });
     app.run();
+}
+
+fn section_heading(title: &str) -> gtk::Label {
+    let heading = gtk::Label::new(Some(title));
+    heading.set_xalign(0.0);
+    heading.add_css_class("title-3");
+    heading.set_visible(false);
+    heading
+}
+
+fn notes_list() -> gtk::Box {
+    gtk::Box::builder()
+        .orientation(gtk::Orientation::Vertical)
+        .spacing(12)
+        .visible(false)
+        .build()
+}
+
+/// The result window is reused across invocations, so each section is
+/// rebuilt from scratch before new notes are appended.
+fn clear_notes(list: &gtk::Box) {
+    while let Some(child) = list.first_child() {
+        list.remove(&child);
+    }
+}
+
+fn render_vocabulary(list: &gtk::Box, notes: &[VocabularyNote]) {
+    clear_notes(list);
+    for note in notes {
+        let row = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .build();
+
+        let title = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(8)
+            .build();
+        let surface = selectable_label(None);
+        surface.set_markup(&format!(
+            "<b>{}</b>",
+            glib::markup_escape_text(&note.surface)
+        ));
+        title.append(&surface);
+        if let Some(lemma) = note.lemma.as_deref().filter(|lemma| !lemma.is_empty())
+            && lemma != note.surface
+        {
+            let lemma_label = selectable_label(Some(lemma));
+            lemma_label.add_css_class("caption");
+            lemma_label.add_css_class("dim-label");
+            lemma_label.set_valign(gtk::Align::Baseline);
+            title.append(&lemma_label);
+        }
+        row.append(&title);
+
+        let meaning = selectable_label(Some(&note.contextual_meaning));
+        row.append(&meaning);
+
+        if let Some(reason) = note.reason.as_deref().filter(|reason| !reason.is_empty()) {
+            let reason_label = selectable_label(Some(reason));
+            reason_label.add_css_class("caption");
+            reason_label.add_css_class("dim-label");
+            row.append(&reason_label);
+        }
+        list.append(&row);
+    }
+}
+
+fn render_expressions(list: &gtk::Box, notes: &[ExpressionNote]) {
+    clear_notes(list);
+    for note in notes {
+        let row = gtk::Box::builder()
+            .orientation(gtk::Orientation::Vertical)
+            .spacing(2)
+            .build();
+
+        let title = gtk::Box::builder()
+            .orientation(gtk::Orientation::Horizontal)
+            .spacing(8)
+            .build();
+        let kind = gtk::Label::new(Some(&note.kind.to_string()));
+        kind.add_css_class("caption");
+        kind.add_css_class("dim-label");
+        kind.set_valign(gtk::Align::Baseline);
+        title.append(&kind);
+        let surface = selectable_label(None);
+        surface.set_markup(&format!(
+            "<b>{}</b>",
+            glib::markup_escape_text(&note.surface)
+        ));
+        title.append(&surface);
+        row.append(&title);
+
+        let meaning = selectable_label(Some(&note.meaning));
+        row.append(&meaning);
+
+        if let Some(explanation) = note
+            .explanation
+            .as_deref()
+            .filter(|explanation| !explanation.is_empty())
+        {
+            let explanation_label = selectable_label(Some(explanation));
+            explanation_label.add_css_class("caption");
+            explanation_label.add_css_class("dim-label");
+            row.append(&explanation_label);
+        }
+        list.append(&row);
+    }
+}
+
+fn selectable_label(text: Option<&str>) -> gtk::Label {
+    let label = gtk::Label::new(text);
+    label.set_xalign(0.0);
+    label.set_wrap(true);
+    label.set_selectable(true);
+    label
 }

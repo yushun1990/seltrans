@@ -68,6 +68,9 @@ Exit condition: useful passage translation works end to end (code complete; desk
 
 ## M3 — Reading analysis
 
+Implementation proposed in the M3 PR; Fedora desktop acceptance is still pending.
+See [M3 setup and manual acceptance](M3.md).
+
 Goal:
 
 ```text
@@ -76,22 +79,22 @@ passage -> translation + selected difficult words + useful expressions
 
 Tasks:
 
-- structured analysis schema v1
-- selective vocabulary extraction
-- idioms
-- slang
-- phrasal verbs
-- collocations
-- contextual meanings
-- sentence patterns
-- technical/non-literal usages
-- compact passage UI
+- [x] structured analysis schema v1
+- [x] selective vocabulary extraction
+- [x] idioms
+- [x] slang
+- [x] phrasal verbs
+- [x] collocations
+- [x] contextual meanings
+- [x] sentence patterns
+- [x] technical/non-literal usages
+- [x] compact passage UI
 
 Guardrail:
 
 > Vocabulary is selective; expressions are exhaustive.
 
-Exit condition: the result teaches useful language without dumping every token.
+Exit condition: the result teaches useful language without dumping every token (code complete; desktop check pending).
 
 ## M4 — Single-word experience
 
