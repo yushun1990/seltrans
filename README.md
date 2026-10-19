@@ -98,14 +98,17 @@ The global shortcut is intentionally configured by the desktop environment rathe
 - [UI wireframe reference](docs/UI_REFERENCES.md)
 - [M1 Fedora setup and acceptance](docs/M1.md)
 - [M2 passage translation setup and acceptance](docs/M2.md)
+- [M3 reading analysis setup and acceptance](docs/M3.md)
 - [Provider config example](docs/config.example.toml)
 - [ADR 0001: resident shortcut model](docs/adr/0001-resident-shortcut-model.md)
 
 ## Status
 
-M1 (resident selection window) is merged. M2 (passage translation through an
-OpenAI-compatible provider) is proposed for review; Fedora manual acceptance
-is pending for both milestones. The vertical slice so far:
+M1 (resident selection window) and M2 (passage translation through an
+OpenAI-compatible provider) are merged. M3 (reading analysis: selective
+vocabulary plus exhaustive expression notes in the same request) is proposed
+for review; Fedora manual acceptance is pending for all milestones. The
+vertical slice so far:
 
 ```text
 Start `seltrans` once (manually for the initial version)
@@ -113,7 +116,8 @@ Alt+Q -> lightweight trigger reads the current selection
   -> IPC to the running seltrans instance
   -> reuse and update the existing GTK result window
   -> classify word vs passage
-  -> passages: async Chinese translation with validated structured output
+  -> passages: async analysis with validated structured output
+     (Chinese translation + selective vocabulary + useful expressions)
   -> words: detailed lexical view, saving and review arrive in M4/M5
 ```
 

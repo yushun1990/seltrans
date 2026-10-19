@@ -202,12 +202,15 @@ A passage result should separate vocabulary from expressions.
 
 ```rust
 struct PassageAnalysis {
-    source: String,
     translation: String,
     vocabulary: Vec<VocabularyNote>,
     expressions: Vec<ExpressionNote>,
 }
 ```
+
+The source text is not part of the analysis result: the caller already
+holds the selection that produced it, and the provider never echoes it
+back.
 
 Vocabulary is intentionally selective.
 
@@ -255,6 +258,12 @@ Conceptual payload:
 ```
 
 The application validates size, required fields, and enum values.
+
+Validation is split by criticality: the translation itself is validated
+strictly and its failure rejects the response, while individual
+vocabulary/expression notes are converted leniently — a malformed row or
+an unknown `kind` is dropped instead of costing the user the translation
+(degradable partial provider failure).
 
 Do not let provider output directly become SQL rows or GTK widgets.
 
