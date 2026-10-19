@@ -254,6 +254,7 @@ pub fn run(
 
         // Analyses complete out of band and may finish after a newer
         // trigger; only the outcome matching the current sequence is shown.
+        let outcome_content = content.clone();
         glib::spawn_future_local(async move {
             while let Ok(outcome) = outcome_receiver.recv().await {
                 if outcome.sequence != outcome_sequence.get() {
@@ -272,6 +273,10 @@ pub fn run(
                         render_expressions(&outcome_expression_notes, &analysis.expressions);
                         outcome_expressions_heading.set_visible(!analysis.expressions.is_empty());
                         outcome_expression_notes.set_visible(!analysis.expressions.is_empty());
+                        // Repopulated wrapped labels can leave stale pixels in
+                        // the GL renderer's texture cache on reused windows;
+                        // force a full repaint of the result surface.
+                        outcome_content.queue_draw();
                     }
                     Err(failure) => {
                         outcome_translation.set_visible(false);
@@ -281,6 +286,7 @@ pub fn run(
                         outcome_expression_notes.set_visible(false);
                         outcome_error.set_text(&failure.to_string());
                         outcome_error.set_visible(true);
+                        outcome_content.queue_draw();
                     }
                 }
             }
@@ -402,6 +408,8 @@ fn render_expressions(list: &gtk::Box, notes: &[ExpressionNote]) {
 fn selectable_label(text: Option<&str>) -> gtk::Label {
     let label = gtk::Label::new(text);
     label.set_xalign(0.0);
+    label.set_yalign(0.0);
+    label.set_valign(gtk::Align::Start);
     label.set_wrap(true);
     label.set_selectable(true);
     label
