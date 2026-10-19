@@ -96,6 +96,20 @@ Guardrail:
 
 Exit condition: the result teaches useful language without dumping every token (code complete; desktop check pending).
 
+## Post-M3 — Result window polish
+
+Presentation-only slice taken before M4: the resident window should read
+as a finished GNOME app rather than a debug view.
+
+- [x] first-run status page explaining the select-then-Alt+Q flow
+- [x] card-based source/translation sections inside an `AdwClamp` reading column
+- [x] boxed-list vocabulary/expression rows with kind pills
+- [x] error banner with one-click retry; empty-selection notice
+- [x] window subtitle reflecting passage/word mode
+
+Exit condition: analysis, fencing and resident behavior unchanged; only
+presentation and error surfacing changed.
+
 ## M4 — Single-word experience
 
 Goal:
