@@ -58,8 +58,8 @@ pub fn run(
         let window = adw::ApplicationWindow::builder()
             .application(app)
             .title("seltrans")
-            .default_width(600)
-            .default_height(460)
+            .default_width(720)
+            .default_height(560)
             .build();
         window.set_hide_on_close(true);
 
@@ -120,15 +120,21 @@ pub fn run(
         translation.set_visible(false);
         content.append(&translation);
 
-        let vocabulary_heading = section_heading("Vocabulary");
-        content.append(&vocabulary_heading);
-        let vocabulary_notes = notes_list();
-        content.append(&vocabulary_notes);
+        // Selection and translation stay fixed; only the notes area below
+        // scrolls, one independent page per tab.
+        let tabs = adw::ViewStack::builder().vexpand(true).build();
+        tabs.set_visible(false);
+        let switcher = adw::ViewSwitcher::builder()
+            .policy(adw::ViewSwitcherPolicy::Wide)
+            .halign(gtk::Align::Start)
+            .visible(false)
+            .build();
+        switcher.set_stack(Some(&tabs));
+        content.append(&switcher);
+        content.append(&tabs);
 
-        let expressions_heading = section_heading("Expressions");
-        content.append(&expressions_heading);
-        let expression_notes = notes_list();
-        content.append(&expression_notes);
+        let (vocabulary_page, vocabulary_notes) = notes_page();
+        let (expressions_page, expression_notes) = notes_page();
 
         let error = gtk::Label::new(None);
         error.set_xalign(0.0);
@@ -137,12 +143,7 @@ pub fn run(
         error.set_visible(false);
         content.append(&error);
 
-        let scroller = gtk::ScrolledWindow::builder()
-            .vexpand(true)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .build();
-        scroller.set_child(Some(&content));
-        toolbar.set_content(Some(&scroller));
+        toolbar.set_content(Some(&content));
         window.set_content(Some(&toolbar));
 
         let escape = gtk::EventControllerKey::new();
@@ -170,9 +171,11 @@ pub fn run(
         let outcome_spinner = spinner.clone();
         let outcome_loading = loading.clone();
         let outcome_translation = translation.clone();
-        let outcome_vocabulary_heading = vocabulary_heading.clone();
+        let outcome_tabs = tabs.clone();
+        let outcome_switcher = switcher.clone();
+        let outcome_vocabulary_page = vocabulary_page.clone();
         let outcome_vocabulary_notes = vocabulary_notes.clone();
-        let outcome_expressions_heading = expressions_heading.clone();
+        let outcome_expressions_page = expressions_page.clone();
         let outcome_expression_notes = expression_notes.clone();
         let outcome_error = error.clone();
         let outcome_sequence = current_sequence.clone();
@@ -208,10 +211,8 @@ pub fn run(
                 source.set_text(&latest.text);
                 spinner.stop();
                 translation.set_visible(false);
-                vocabulary_heading.set_visible(false);
-                vocabulary_notes.set_visible(false);
-                expressions_heading.set_visible(false);
-                expression_notes.set_visible(false);
+                switcher.set_visible(false);
+                tabs.set_visible(false);
                 error.set_visible(false);
 
                 match classification {
@@ -268,11 +269,20 @@ pub fn run(
                         outcome_translation.set_text(&analysis.translation);
                         outcome_translation.set_visible(true);
                         render_vocabulary(&outcome_vocabulary_notes, &analysis.vocabulary);
-                        outcome_vocabulary_heading.set_visible(!analysis.vocabulary.is_empty());
-                        outcome_vocabulary_notes.set_visible(!analysis.vocabulary.is_empty());
                         render_expressions(&outcome_expression_notes, &analysis.expressions);
-                        outcome_expressions_heading.set_visible(!analysis.expressions.is_empty());
-                        outcome_expression_notes.set_visible(!analysis.expressions.is_empty());
+                        set_notes_pages(
+                            &outcome_tabs,
+                            &outcome_vocabulary_page,
+                            &outcome_expressions_page,
+                            analysis.vocabulary.len(),
+                            analysis.expressions.len(),
+                        );
+                        outcome_switcher.set_visible(
+                            !analysis.vocabulary.is_empty() && !analysis.expressions.is_empty(),
+                        );
+                        outcome_tabs.set_visible(
+                            !analysis.vocabulary.is_empty() || !analysis.expressions.is_empty(),
+                        );
                         // Repopulated wrapped labels can leave stale pixels in
                         // the GL renderer's texture cache on reused windows;
                         // force a full repaint of the result surface.
@@ -280,10 +290,8 @@ pub fn run(
                     }
                     Err(failure) => {
                         outcome_translation.set_visible(false);
-                        outcome_vocabulary_heading.set_visible(false);
-                        outcome_vocabulary_notes.set_visible(false);
-                        outcome_expressions_heading.set_visible(false);
-                        outcome_expression_notes.set_visible(false);
+                        outcome_switcher.set_visible(false);
+                        outcome_tabs.set_visible(false);
                         outcome_error.set_text(&failure.to_string());
                         outcome_error.set_visible(true);
                         outcome_content.queue_draw();
@@ -309,8 +317,43 @@ fn notes_list() -> gtk::Box {
     gtk::Box::builder()
         .orientation(gtk::Orientation::Vertical)
         .spacing(12)
-        .visible(false)
+        .margin_bottom(12)
         .build()
+}
+
+/// One scrollable tab page: the notes box lives in its own scrolled window
+/// so each tab scrolls independently of the fixed selection/translation.
+fn notes_page() -> (gtk::ScrolledWindow, gtk::Box) {
+    let notes = notes_list();
+    let page = gtk::ScrolledWindow::builder()
+        .vexpand(true)
+        .hscrollbar_policy(gtk::PolicyType::Never)
+        .build();
+    page.set_child(Some(&notes));
+    (page, notes)
+}
+
+/// Rebuilds the tab pages for a new analysis. Pages are re-added rather than
+/// toggled so an empty section never shows an empty tab, and the switcher is
+/// only worth its space when both sections have content.
+fn set_notes_pages(
+    tabs: &adw::ViewStack,
+    vocabulary_page: &gtk::ScrolledWindow,
+    expressions_page: &gtk::ScrolledWindow,
+    vocabulary_count: usize,
+    expressions_count: usize,
+) {
+    while let Some(child) = tabs.first_child() {
+        tabs.remove(&child);
+    }
+    if vocabulary_count > 0 {
+        let page = tabs.add_titled(vocabulary_page, Some("vocabulary"), "Vocabulary");
+        page.set_badge_number(vocabulary_count as u32);
+    }
+    if expressions_count > 0 {
+        let page = tabs.add_titled(expressions_page, Some("expressions"), "Expressions");
+        page.set_badge_number(expressions_count as u32);
+    }
 }
 
 /// The result window is reused across invocations, so each section is
